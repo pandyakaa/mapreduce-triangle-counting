@@ -45,7 +45,6 @@ public class TriangleCount {
             long v = Long.parseLong(uv[1]);
 
             context.write(new LongWritable(u), new LongWritable(v));
-            context.write(new LongWritable(v), new LongWritable(u));
         }
     }
 
@@ -69,13 +68,19 @@ public class TriangleCount {
             ArrayList<Long> arrvalues = new ArrayList<Long>();
 
             for (LongWritable val : values) {
-                arrvalues.add(val.get());
-            }
-            for (int i = 0; i < arrvalues.size() - 1; i++) {
-                for (int j = i + 1; j < arrvalues.size(); j++) {
-                    Text val = new Text(Long.toString(arrvalues.get(i)) + ";" + Long.toString(arrvalues.get(j)));
-                    context.write(key, val);
+                for (Long cachedVal : arrvalues) {
+                    long v1 = val.get();
+                    long v2 = cachedVal;
+
+                    if (v1 > v2) {
+                        long temp = v1;
+                        v1 = v2;
+                        v2 = temp;
+                    }
+                    Text valText = new Text(Long.toString(v1) + ";" + Long.toString(v2));
+                    context.write(key, valText);
                 }
+                arrvalues.add(val.get());
             }
         }
     }
@@ -97,17 +102,19 @@ public class TriangleCount {
     }
 
     public static class CountTriangleReduce extends Reducer<Text, Text, LongWritable, LongWritable> {
-        public void reduce(Text key, Iterable<Text> values, Context context)
-                throws IOException, InterruptedException {
-            HashSet<String> connections = new HashSet<>();
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            long count = 0l;
+            boolean directlyConnected = false;
 
             for (Text val : values) {
-                connections.add(val.toString());
+                if (val.toString().equals("$")) {
+                    directlyConnected = true;
+                } else {
+                    count++;
+                }
             }
-
-            Long connSize = new Long(connections.size()) - 1;
-            if (connections.contains("$") && connSize != 0) {
-                context.write(new LongWritable(0), new LongWritable(connections.size()-1));
+            if (directlyConnected) {
+                context.write(new LongWritable(0), new LongWritable(count));
             }
         }
     }
@@ -125,7 +132,7 @@ public class TriangleCount {
         public void reduce(LongWritable key, Iterable<LongWritable> values, Context context)
                 throws IOException, InterruptedException {
             Long sum = 0l;
-            for (LongWritable val : values ) {
+            for (LongWritable val : values) {
                 sum += val.get();
             }
 
@@ -135,6 +142,7 @@ public class TriangleCount {
 
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
+        conf.setInt("mapreduce.task.timeout", 6000000);
         Job preprocessingJob = new Job(conf, "Preprocessing data");
         preprocessingJob.setJarByClass(TriangleCount.class);
 
@@ -150,10 +158,9 @@ public class TriangleCount {
         preprocessingJob.setInputFormatClass(TextInputFormat.class);
         preprocessingJob.setOutputFormatClass(TextOutputFormat.class);
 
-        Path outputPath = new Path(args[1]);
+        Path outputPath = new Path(args[2]);
         FileInputFormat.addInputPath(preprocessingJob, new Path(args[0]));
-        FileOutputFormat.setOutputPath(preprocessingJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/preprocess-output"));
+        FileOutputFormat.setOutputPath(preprocessingJob, new Path(args[1] + "-1"));
 
         // =============================================
         Job connectedJob = new Job(conf, "Connected");
@@ -171,11 +178,9 @@ public class TriangleCount {
         connectedJob.setInputFormatClass(TextInputFormat.class);
         connectedJob.setOutputFormatClass(TextOutputFormat.class);
 
-        FileInputFormat.addInputPath(connectedJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/preprocess-output"));
+        FileInputFormat.addInputPath(connectedJob, new Path(args[1] + "-1"));
         // FileOutputFormat.setOutputPath(connectedJob, new Path(args[1]));
-        FileOutputFormat.setOutputPath(connectedJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/count-output"));
+        FileOutputFormat.setOutputPath(connectedJob, new Path(args[1] + "-2"));
 
         // =============================================
         Job countJob = new Job(conf, "Count Triangle");
@@ -193,12 +198,9 @@ public class TriangleCount {
         countJob.setInputFormatClass(TextInputFormat.class);
         countJob.setOutputFormatClass(TextOutputFormat.class);
 
-        FileInputFormat.addInputPath(countJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/preprocess-output"));
-        FileInputFormat.addInputPath(countJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/count-output"));
-        FileOutputFormat.setOutputPath(countJob, new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/count-triangle-output"));
-
+        FileInputFormat.addInputPath(countJob, new Path(args[1] + "-1"));
+        FileInputFormat.addInputPath(countJob, new Path(args[1] + "-2"));
+        FileOutputFormat.setOutputPath(countJob, new Path(args[1] + "-3"));
 
         // =============================================
         Job sumJob = new Job(conf, "Sum Count Triangle");
@@ -216,9 +218,8 @@ public class TriangleCount {
         sumJob.setInputFormatClass(TextInputFormat.class);
         sumJob.setOutputFormatClass(TextOutputFormat.class);
 
-        FileInputFormat.addInputPath(sumJob,
-                new Path("/home/aptanagi/Documents/college/PAT/mapreduce-triangle-counting/temp/count-triangle-output"));
-        FileOutputFormat.setOutputPath(sumJob, new Path(args[1]));
+        FileInputFormat.addInputPath(sumJob, new Path(args[1] + "-3"));
+        FileOutputFormat.setOutputPath(sumJob, outputPath);
 
         outputPath.getFileSystem(conf).delete(outputPath);
 
